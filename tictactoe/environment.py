@@ -56,6 +56,8 @@ class TicTacToeEnv(gym.Env):
             available_moves = self.possible_actions(self.board)
             return random.choice(available_moves)
         else if self.oppenent_type == 'agent':
+            if self.agent is None:
+                raise ValueError("Agent is not set")
             action = agent.choose_action(self.board, mode='eval')
             return action
 
