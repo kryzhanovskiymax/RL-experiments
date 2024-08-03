@@ -1,46 +1,69 @@
 import gym
 from gym import spaces
-from gym.utils import seeding
-from enum import Enum
-
 import numpy as np
 import random
 
-
 class TicTacToeEnv(gym.Env):
-    environment_name = "TicTacToeEnv"
-
-    def __init__(self,
-                 rewards=dict(
-                     pos_ep=1,
-                     neg_ep=-1,
-                     draw=0.5,
-                     step=-0.1
-                 ),
-                 thresholds=dict(
-                     win_rate=0.9,
-                     draw_rate=0.1
-                 ),
-                 opponent_type='random'):
+    def __init__(self, opponent_type='random', agent=None):
+        super(TicTacToeEnv, self).__init__()
         self.action_space = spaces.Discrete(9)
-        self.observation_space = spaces.Tuple(
-            (spaces.Discrete(3),spaces.Discrete(3))
-        )
-        self.rewards = rewards
-        self.thresholds = thresholds
-        self.stats = {
-            'games_played': 0
-        }
+        self.observation_space = spaces.Box(low=0,
+                                            high=2,
+                                            shape=(3, 3),
+                                            dtype=np.int8)
+        self.opponent_type = opponent_type
+        self.agent = agent
+        self.seed()
+        self.reset()
 
-    def reset(self):
-        self.board = np.zeros((3, 3), dtype=int)
+    def reset(self, seed=None, options=None):
+        if seed is not None:
+            self.seed(seed)
+        self.board = np.zeros((3, 3), dtype=int)  # 0 for empty, 1 for 'X', 2 for 'O'
+        self.current_player = 1  # Player 'X' starts
+        return self.board, {}
+
+    def seed(self, seed=None):
+        self.np_random, seed = gym.utils.seeding.np_random(seed)
+        return [seed]
+
+    def step(self, action):
+        if self.board.flat[action] != 0:
+            return self.board, -10, True, {}
+        self.board.flat[action] = self.current_player
+
+        if self._check_win(self.current_player):
+            return self.board, 1 if self.current_player == 1 else -1, True, {}
+
+        if self._check_draw():
+            return self.board, 0.5, True, {}
+
+        self.current_player = 2
+        opponent_action = self.opponent_policy()
+        self.board.flat[opponent_action] = self.current_player
+
+        if self._check_win(self.current_player):
+            return self.board, -1 if self.current_player == 2 else 1, True, {}
+
+        if self._check_draw():
+            return self.board, 0.5, True, {}
+
         self.current_player = 1
-        return self._get_obs()
+        return self.board, -0.1, False, {}
 
-    def _get_obs(self):
-        return self.board
+    def opponent_policy(self):
+        if self.opponent_type == 'random':
+            available_moves = self.possible_actions(self.board)
+            return random.choice(available_moves)
+        else if self.oppenent_type == 'agent':
+            action = agent.choose_action(self.board, mode='eval')
+            return action
+
+    def possible_actions(self, board):
+        return [i for i, x in enumerate(board.flat) if x == 0]
 
     def _check_win(self, player):
+        b = self.board
         for i in range(3):
             if np.all(b[i, :] == player) or np.all(b[:, i] == player):
                 return True
@@ -51,39 +74,8 @@ class TicTacToeEnv(gym.Env):
     def _check_draw(self):
         return np.all(self.board != 0)
 
-    def opponent_policy(self):
-        available_moves = np.where(self.board == 0)[0]
-        if self.opponent_type == 'random':
-            return random.choice(available_moves)
-        elif self.opponent_type == 'human':
-            move = int(input(f"Enter your move (0-8): "))  # Simple CLI input for human
-            while move not in available_moves:
-                move = int(input(f"Invalid move. Enter your move (0-8): "))
-            return move
-        else:
-            raise ValueError(f"Unknown opponent type: {self.opponent_type}")
-
-    def step(self, action):
-        if self.board[action] != 0:
-            raise ValueError("Invalid action. Cell already taken.")
-
-        # Player 1 move
-        self.board[action] = self.current_player
-
-        if self._check_win(self.current_player):
-            return self._get_obs(), self.rewards['pos_ep'], True, {}
-
-        if self._check_draw():
-            return self._get_obs(), self.rewards['draw'], True, {}
-
-        # Opponent move
-        opponent_action = self.opponent_policy()
-        self.board[opponent_action] = 2  # Opponent is always 'O'
-
-        if self._check_win(2):
-            return self._get_obs(), self.rewards['neg_ep'], True, {}
-
-        if self._check_draw():
-            return self._get_obs(), self.rewards['draw'], True, {}
-
-        return self._get_obs(), self.rewards['step'], False, {}
+# Register the environment
+gym.envs.registration.register(
+    id='TicTacToe-v0',
+    entry_point=TicTacToeEnv,
+)

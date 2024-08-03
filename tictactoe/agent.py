@@ -34,23 +34,42 @@ class QAgentNetwork(torch.nn.Module):
         return x
 
 class QAgentConvNetwork(nn.Module):
-    def __init__(self):
+    def __init__(self,
+                 input_channels=1,
+                 hidden_sizes=[32, 64, 32],
+                 activation=nn.ReLU):
         '''
-            Class for DQNAgent network
+        Class for configurable DQNAgent network
+
+        Parameters:
+        - input_channels: Number of input channels, default is 1 for TicTacToe
+        - hidden_sizes: List of hidden layer sizes
+        - activation: Activation function class, default is ReLU
         '''
-        super(QAgentNetwork, self).__init__()
-        self.activation = nn.ReLU()
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(64, 32, kernel_size=3, padding=1)
-        self.conv4 = nn.Conv2d(32, 1, kernel_size=3, padding=1)
+        super(QAgentConvNetwork, self).__init__()
+        self.activation = activation()
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Conv2d(input_channels,
+                                     hidden_sizes[0],
+                                     kernel_size=3,
+                                     padding=1))
+
+        # Hidden layers
+        for i in range(1, len(hidden_sizes)):
+            self.layers.append(nn.Conv2d(hidden_sizes[i-1],
+                                         hidden_sizes[i],
+                                         kernel_size=3,
+                                         padding=1))
+
+        # Output layer
+        self.layers.append(nn.Conv2d(hidden_sizes[-1], 1,
+                                     kernel_size=3, padding=1))
 
     def forward(self, x):
         x = x.view(-1, 1, 3, 3)
-        x = self.activation(self.conv1(x))
-        x = self.activation(self.conv2(x))
-        x = self.activation(self.conv3(x))
-        x = self.conv4(x)
+        for layer in self.layers[:-1]:
+            x = self.activation(layer(x))
+        x = self.layers[-1](x)
         x = x.view(-1, 9)   
         return x
 
@@ -66,6 +85,7 @@ class HumanAgent:
         """
         Prompt the human player to input their action.
         """
+        print(state)
         possible_actions = self.env.possible_actions(state)
         print("Possible actions: ", possible_actions)
         action = None
@@ -203,7 +223,6 @@ class QAgent:
         self.env = env
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=memory_size)
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
@@ -220,11 +239,10 @@ class QAgent:
         self.writer = SummaryWriter(log_dir) if log_dir else SummaryWriter()
         self.episode_rewards = []
         self.name = name
-        self.buffer = ExperienceBuffer(10000)
+        self.buffer = ExperienceBuffer(memory_size)
 
     def choose_action(self, state, mode='train'):
-        possible_actions = np.where(state == 0)[0]
-        
+        possible_actions = self.env.possible_actions(state)
         if mode == 'train':
             if np.random.rand() <= self.epsilon:
                 return random.choice(possible_actions)
@@ -256,19 +274,21 @@ class QAgent:
         self.buffer.append(exp)
     
     def replay(self, log=True, log_step=10):
-        if len(self.memory) < self.batch_size:
+        if len(self.buffer) < self.batch_size:
             return
         
-        states, actions, rewards, next_states, dones = self.buffer.sample(self.batch_size)
-        states = torch.Tensor(states, copy=False)
-        actions = torch.Tensors(actions)
-        rewards = torch.Tensors(rewards)
-        next_states = torch.Tensor(next_states, copy=False)
+        states, actions, rewards, next_states, dones = \
+                            self.buffer.sample(self.batch_size)
+        states = torch.Tensor(np.array(states,
+                                       copy=False))
+        actions = torch.LongTensor(actions)
+        rewards = torch.Tensor(rewards)
+        next_states = torch.Tensor(np.array(next_states,
+                                            copy=False))
         done_mask = torch.BoolTensor(dones)
 
         state_action_values = self.model(states).gather(
-            1, actions.unsqueeze(-1)
-        ).squeeze(-1)
+            1, actions.unsqueeze(-1)).squeeze(-1)
         next_state_values = self.target_model(next_states).max(1)[0]
         next_state_values[done_mask] = 0.0
         next_state_values = next_state_values.detach()
@@ -309,6 +329,7 @@ class QAgent:
         self.writer.add_scalar(f'{self.name}/Reward/mean_last_{n}_episodes',
                                mean_reward,
                                len(self.episode_rewards))
+        return mean_reward
 
     def close_writer(self):
         self.writer.close()

@@ -1,4 +1,5 @@
 import collections
+import numpy as np
 
 Experience = collections.namedtuple(
     'Experience',
@@ -10,7 +11,7 @@ class ExperienceBuffer():
         self.buffer = collections.deque(maxlen=capacity)
 
     def __len__(self):
-        return len(buffer)
+        return len(self.buffer)
 
     def append(self, experience: Experience):
         self.buffer.append(experience)
