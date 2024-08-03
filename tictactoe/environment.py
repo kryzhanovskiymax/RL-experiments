@@ -1,85 +1,83 @@
-import numpy as np
 import gym
 from gym import spaces
+import numpy as np
+import random
 
 class TicTacToeEnv(gym.Env):
-    def __init__(self):
+    def __init__(self, opponent_type='random', agent=None):
         super(TicTacToeEnv, self).__init__()
         self.action_space = spaces.Discrete(9)
         self.observation_space = spaces.Box(low=0,
                                             high=2,
                                             shape=(3, 3),
                                             dtype=np.int8)
+        self.opponent_type = opponent_type
+        self.agent = agent
+        self.seed()
         self.reset()
-        
-    def reset(self):
-        self.board = np.zeros((3, 3), dtype=int)
-        self.done = False
-        self.winner = None
-        return self.board
-    
-    def step(self, action, player):
-        if self.done:
-            raise ValueError("Game is already finished!")
-        x, y = divmod(action, 3)
-        if self.board[x, y] != 0:
+
+    def reset(self, seed=None, options=None):
+        if seed is not None:
+            self.seed(seed)
+        self.board = np.zeros((3, 3), dtype=int)  # 0 for empty, 1 for 'X', 2 for 'O'
+        self.current_player = 1  # Player 'X' starts
+        return self.board, {}
+
+    def seed(self, seed=None):
+        self.np_random, seed = gym.utils.seeding.np_random(seed)
+        return [seed]
+
+    def step(self, action):
+        if self.board.flat[action] != 0:
             return self.board, -10, True, {}
-        self.board[x, y] = player
-        self.done, self.winner = self.check_done()
-        reward = self.get_reward(player)        
-        return self.board, self.get_reward(player), self.done, {}
-    
-    def check_done(self):
+        self.board.flat[action] = self.current_player
+
+        if self._check_win(self.current_player):
+            return self.board, 1 if self.current_player == 1 else -1, True, {}
+
+        if self._check_draw():
+            return self.board, 0.5, True, {}
+
+        self.current_player = 2
+        opponent_action = self.opponent_policy()
+        self.board.flat[opponent_action] = self.current_player
+
+        if self._check_win(self.current_player):
+            return self.board, -1 if self.current_player == 2 else 1, True, {}
+
+        if self._check_draw():
+            return self.board, 0.5, True, {}
+
+        self.current_player = 1
+        return self.board, -0.1, False, {}
+
+    def opponent_policy(self):
+        if self.opponent_type == 'random':
+            available_moves = self.possible_actions(self.board)
+            return random.choice(available_moves)
+        else if self.oppenent_type == 'agent':
+            if self.agent is None:
+                raise ValueError("Agent is not set")
+            action = agent.choose_action(self.board, mode='eval')
+            return action
+
+    def possible_actions(self, board):
+        return [i for i, x in enumerate(board.flat) if x == 0]
+
+    def _check_win(self, player):
+        b = self.board
         for i in range(3):
-            if abs(sum(self.board[i, :])) == 3 or abs(sum(self.board[:, i])) == 3:
-                return True, np.sign(sum(self.board[i, :]) or sum(self.board[:, i]))
-        diag1 = sum(self.board[i, i] for i in range(3))
-        diag2 = sum(self.board[i, 2-i] for i in range(3))
-        if abs(diag1) == 3 or abs(diag2) == 3:
-            return True, np.sign(diag1 or diag2)
-        if not any(0 in row for row in self.board):
-            return True, 0
-        return False, None
-    
-    def get_reward(self, player):
-        if self.done:
-            if self.winner == player:
-                return 2
-            elif self.winner == 0:
-                return 1
-            else:
-                return -1
-        return 0
+            if np.all(b[i, :] == player) or np.all(b[:, i] == player):
+                return True
+        if b[0, 0] == b[1, 1] == b[2, 2] == player or b[0, 2] == b[1, 1] == b[2, 0] == player:
+            return True
+        return False
 
-    def is_valid_action(self, action, state):
-        row, col = divmod(action, 3)
-        return state[row, col] == 0
+    def _check_draw(self):
+        return np.all(self.board != 0)
 
-    def possible_actions(self, state):
-        return [action for action in range(self.action_space.n) \
-                if self.is_valid_action(action, state)]
-
-    def render(self):
-        print(self.board)
-
-    def check_winner(self):
-        board = self.board.reshape(3, 3)
-
-        # Check rows
-        for row in board:
-            if abs(sum(row)) == 3:
-                return np.sign(sum(row))
-
-        # Check columns
-        for col in board.T:
-            if abs(sum(col)) == 3:
-                return np.sign(sum(col))
-
-        # Check diagonals
-        if abs(board.trace()) == 3:
-            return np.sign(board.trace())
-        if abs(np.fliplr(board).trace()) == 3:
-            return np.sign(np.fliplr(board).trace())
-
-        # No winner
-        return 0
+# Register the environment
+gym.envs.registration.register(
+    id='TicTacToe-v0',
+    entry_point=TicTacToeEnv,
+)

@@ -4,6 +4,7 @@ import torch.optim as optim
 import numpy as np
 import random
 from collections import deque
+from experience import Experience, ExperienceBuffer
 from torch.utils.tensorboard import SummaryWriter
 
 class QAgentNetwork(torch.nn.Module):
@@ -32,6 +33,46 @@ class QAgentNetwork(torch.nn.Module):
         x = self.output_layer(x)
         return x
 
+class QAgentConvNetwork(nn.Module):
+    def __init__(self,
+                 input_channels=1,
+                 hidden_sizes=[32, 64, 32],
+                 activation=nn.ReLU):
+        '''
+        Class for configurable DQNAgent network
+
+        Parameters:
+        - input_channels: Number of input channels, default is 1 for TicTacToe
+        - hidden_sizes: List of hidden layer sizes
+        - activation: Activation function class, default is ReLU
+        '''
+        super(QAgentConvNetwork, self).__init__()
+        self.activation = activation()
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Conv2d(input_channels,
+                                     hidden_sizes[0],
+                                     kernel_size=3,
+                                     padding=1))
+
+        # Hidden layers
+        for i in range(1, len(hidden_sizes)):
+            self.layers.append(nn.Conv2d(hidden_sizes[i-1],
+                                         hidden_sizes[i],
+                                         kernel_size=3,
+                                         padding=1))
+
+        # Output layer
+        self.layers.append(nn.Conv2d(hidden_sizes[-1], 1,
+                                     kernel_size=3, padding=1))
+
+    def forward(self, x):
+        x = x.view(-1, 1, 3, 3)
+        for layer in self.layers[:-1]:
+            x = self.activation(layer(x))
+        x = self.layers[-1](x)
+        x = x.view(-1, 9)   
+        return x
+
 
 class HumanAgent:
     def __init__(self,
@@ -44,6 +85,7 @@ class HumanAgent:
         """
         Prompt the human player to input their action.
         """
+        print(state)
         possible_actions = self.env.possible_actions(state)
         print("Possible actions: ", possible_actions)
         action = None
@@ -163,6 +205,7 @@ class FixedStrategyAgent:
 class QAgent:
     def __init__(self,
                  env,
+                 device="cpu",
                  name='Agent',
                  state_size=9,
                  action_size=9,
@@ -176,10 +219,10 @@ class QAgent:
                  memory_size=10000,
                  update_rate=10,
                  log_dir=None):
+        self.device = device
         self.env = env
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=memory_size)
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
@@ -196,10 +239,10 @@ class QAgent:
         self.writer = SummaryWriter(log_dir) if log_dir else SummaryWriter()
         self.episode_rewards = []
         self.name = name
+        self.buffer = ExperienceBuffer(memory_size)
 
     def choose_action(self, state, mode='train'):
         possible_actions = self.env.possible_actions(state)
-        
         if mode == 'train':
             if np.random.rand() <= self.epsilon:
                 return random.choice(possible_actions)
@@ -227,33 +270,39 @@ class QAgent:
             raise ValueError("Mode should be either 'train' or 'eval'")
 
     def remember(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state, done))
+        exp = Experience(state, action, reward, next_state, done)
+        self.buffer.append(exp)
     
-    def replay(self):
-        if len(self.memory) < self.batch_size:
+    def replay(self, log=True, log_step=10):
+        if len(self.buffer) < self.batch_size:
             return
         
-        minibatch = random.sample(self.memory, self.batch_size)
-        total_loss = 0
-        for state, action, reward, next_state, done in minibatch:
-            state = torch.FloatTensor(state.flatten()).unsqueeze(0)
-            next_state = torch.FloatTensor(next_state.flatten()).unsqueeze(0)
-            target = reward
-            if not done:
-                target += self.gamma * torch.max(self.target_model(next_state)[0]).item()
-            target_f = self.model(state).clone().detach()
-            target_f[0][action] = target
-            self.model.train()
-            self.optimizer.zero_grad()
-            loss = self.loss_fn(self.model(state), target_f)
-            loss.backward()
-            self.optimizer.step()
-            total_loss += loss.item()
-        
-        avg_loss = total_loss / self.batch_size
-        self.writer.add_scalar(f'{self.name}/Loss/train',
-                               avg_loss,
-                               self.train_step)
+        states, actions, rewards, next_states, dones = \
+                            self.buffer.sample(self.batch_size)
+        states = torch.Tensor(np.array(states,
+                                       copy=False))
+        actions = torch.LongTensor(actions)
+        rewards = torch.Tensor(rewards)
+        next_states = torch.Tensor(np.array(next_states,
+                                            copy=False))
+        done_mask = torch.BoolTensor(dones)
+
+        state_action_values = self.model(states).gather(
+            1, actions.unsqueeze(-1)).squeeze(-1)
+        next_state_values = self.target_model(next_states).max(1)[0]
+        next_state_values[done_mask] = 0.0
+        next_state_values = next_state_values.detach()
+        expected_state_action_values = next_state_values * self.gamma + rewards
+        loss = self.loss_fn(state_action_values, expected_state_action_values)
+        loss.backward()
+        self.optimizer.step()
+        total_loss = loss.item()
+
+        if log:
+            if self.train_step % log_step == 0:
+                self.writer.add_scalar(f'{self.name}/Loss/train',
+                                       total_loss,
+                                       self.train_step)
         
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
@@ -280,6 +329,7 @@ class QAgent:
         self.writer.add_scalar(f'{self.name}/Reward/mean_last_{n}_episodes',
                                mean_reward,
                                len(self.episode_rewards))
+        return mean_reward
 
     def close_writer(self):
         self.writer.close()
@@ -293,3 +343,4 @@ class QAgent:
         self.update_target_network()
         self.optimizer = optim.Adam(self.model.parameters(),
                                     lr=self.lr)  
+        self.train_step = 0
