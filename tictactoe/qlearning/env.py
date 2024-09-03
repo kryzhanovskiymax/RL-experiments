@@ -102,27 +102,50 @@ class TicTacToeEnv:
                     self.reset()
                     break
 
-    def play_with_human(self):
+    def play_with_human(self, starts = 'agent'):
         while not self.is_end:
-            positions = self.available_positions()
-            action = self.player1.choose_action(positions, self.board, self.current_player_symbol)
-            self.update_state(action)
-            self.render_board()
-            win = self.check_winner()
-            if win is not None:
-                print(f"{self.player1.name} wins!" if win == 1 else "Tie!")
-                self.reset()
-                break
+            if starts == 'agent':
+                positions = self.available_positions()
+                action = self.player1.choose_action(positions, self.board, self.current_player_symbol)
+                self.update_state(action)
+                self.render_board()
+                win = self.check_winner()
+                if win is not None:
+                    print(f"{self.player1.name} wins!" if win == 1 else "Tie!")
+                    self.reset()
+                    break
+    
+                positions = self.available_positions()
+                action = self.player2.choose_action(positions)
+                self.update_state(action)
+                self.render_board()
+                win = self.check_winner()
+                if win is not None:
+                    print(f"{self.player2.name} wins!" if win == -1 else "Tie!")
+                    self.reset()
+                    break
+            else:
+                positions = self.available_positions()
+                action = self.player2.choose_action(positions)
+                self.update_state(action)
+                self.render_board()
+                win = self.check_winner()
 
-            positions = self.available_positions()
-            action = self.player2.choose_action(positions)
-            self.update_state(action)
-            self.render_board()
-            win = self.check_winner()
-            if win is not None:
-                print(f"{self.player2.name} wins!" if win == -1 else "Tie!")
-                self.reset()
-                break
+                if win is not None:
+                    print(f"{self.player2.name} wins!" if win == 1 else "Tie!")
+                    self.reset()
+                    break
+                
+                positions = self.available_positions()
+                action = self.player1.choose_action(positions, self.board, self.current_player_symbol)
+                self.update_state(action)
+                self.render_board()
+                win = self.check_winner()
+
+                if win is not None:
+                    print(f"{self.player1.name} wins!" if win == -1 else "Tie!")
+                    self.reset()
+                    break
 
     def render_board(self):
         symbols = {0: ' ', 1: 'x', -1: 'o'}
